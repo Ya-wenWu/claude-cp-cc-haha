@@ -156,6 +156,18 @@ export async function validatePluginManifest(
     }
   }
 
+  // Reject oversized JSON files to prevent OOM attacks
+  const MAX_JSON_SIZE = 10 * 1024 * 1024
+  if (content.length > MAX_JSON_SIZE) {
+    return {
+      success: false,
+      errors: [{ path: 'file', message: `Plugin manifest too large: ${content.length} bytes (max ${MAX_JSON_SIZE})` }],
+      warnings: [],
+      filePath: absolutePath,
+      fileType: 'plugin',
+    }
+  }
+
   let parsed: unknown
   try {
     parsed = jsonParse(content)
@@ -331,6 +343,18 @@ export async function validateMarketplaceManifest(
     return {
       success: false,
       errors: [{ path: 'file', message, code }],
+      warnings: [],
+      filePath: absolutePath,
+      fileType: 'marketplace',
+    }
+  }
+
+  // Reject oversized JSON files to prevent OOM attacks
+  const MAX_JSON_SIZE = 10 * 1024 * 1024
+  if (content.length > MAX_JSON_SIZE) {
+    return {
+      success: false,
+      errors: [{ path: 'file', message: `Marketplace manifest too large: ${content.length} bytes (max ${MAX_JSON_SIZE})` }],
       warnings: [],
       filePath: absolutePath,
       fileType: 'marketplace',

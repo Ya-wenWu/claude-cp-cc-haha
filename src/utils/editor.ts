@@ -98,12 +98,15 @@ export function openFileInExternalEditor(
     const detachedOpts: SpawnOptions = { detached: true, stdio: 'ignore' }
     let child
     if (process.platform === 'win32') {
-      // shell: true on win32 so code.cmd / cursor.cmd / windsurf.cmd resolve —
-      // CreateProcess can't execute .cmd/.bat directly. Assemble quoted command
-      // string; cmd.exe doesn't expand $() or backticks inside double quotes.
-      // Quote each arg so paths with spaces survive the shell join.
-      const gotoStr = gotoArgv.map(a => `"${a}"`).join(' ')
-      child = spawn(`${editor} ${gotoStr}`, { ...detachedOpts, shell: true })
+      // On Windows use cmd.exe /c with explicit argv array to resolve .cmd/.bat
+      // files (code.cmd, cursor.cmd, etc.) without shell argument injection.
+      // filePath is filesystem-sourced — embedding it in a shell string would
+      // allow RCE from a malicious repo filename containing %VAR% expansions.
+      const comSpec = process.env.COMSPEC || 'cmd.exe'
+      child = spawn(comSpec, ['/c', base, ...editorArgs, ...gotoArgv], {
+        ...detachedOpts,
+        windowsHide: true,
+      })
     } else {
       // POSIX: argv array with no shell — injection-safe. shell: true would
       // expand $() / backticks inside double quotes, and filePath is
@@ -132,15 +135,11 @@ export function openFileInExternalEditor(
     const syncOpts: SpawnSyncOptions = { stdio: 'inherit' }
     let result
     if (process.platform === 'win32') {
-      // On Windows use shell: true so cmd.exe builtins like `start` resolve.
-      // shell: true joins args unquoted, so assemble the command string with
-      // explicit quoting ourselves (matching promptEditor.ts:74). spawnSync
-      // returns errors in .error rather than throwing.
-      const lineArg = useGotoLine ? `+${line} ` : ''
-      result = spawnSync(`${editor} ${lineArg}"${filePath}"`, {
-        ...syncOpts,
-        shell: true,
-      })
+      // On Windows use cmd.exe /c with explicit argv to resolve .cmd/.bat
+      // and cmd.exe builtins (start) without shell argument injection.
+      const comSpec = process.env.COMSPEC || 'cmd.exe'
+      const posArgs = useGotoLine ? [`+${line}`, filePath] : [filePath]
+      result = spawnSync(comSpec, ['/c', base, ...editorArgs, ...posArgs], syncOpts)
     } else {
       // POSIX: spawn directly (no shell), argv array is quote-safe.
       const args = [

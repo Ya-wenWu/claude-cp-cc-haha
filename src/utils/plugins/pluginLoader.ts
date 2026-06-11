@@ -340,8 +340,10 @@ export async function copyDir(src: string, dest: string): Promise<void> {
         const relativeLinkPath = relative(dirname(destPath), destTargetPath)
         await symlink(relativeLinkPath, destPath)
       } else {
-        // Target is outside source tree - use absolute resolved path
-        await symlink(resolvedTarget, destPath)
+        // Target is outside source tree — copy file content instead of
+        // symlinking to prevent the destination from referencing arbitrary
+        // external paths (TOCTOU / symlink-follow / path traversal).
+        await copyFile(resolvedTarget, destPath)
       }
     }
   }
@@ -468,6 +470,11 @@ export async function copyPluginToVersionedCache(
  * Validate a git URL using Node.js URL parsing
  */
 function validateGitUrl(url: string): string {
+  // Reject URLs starting with '-' — git would interpret them as flags,
+  // enabling arbitrary flag injection (e.g., --help, -c, --exec-path).
+  if (url.startsWith('-')) {
+    throw new Error(`Invalid git URL: URL starts with '-': ${url}`)
+  }
   try {
     const parsed = new URL(url)
     if (!['https:', 'http:', 'file:'].includes(parsed.protocol)) {
@@ -537,9 +544,16 @@ export async function gitClone(
   ref?: string,
   sha?: string,
 ): Promise<void> {
+  // For SSH URLs, enforce StrictHostKeyChecking to prevent MITM attacks.
+  // accept-new accepts new host keys but fails on changed keys (stricter
+  // than StrictHostKeyChecking=no). Scoped to this command via -c flag.
+  const sshArgs = gitUrl.startsWith('git@')
+    ? ['-c', 'core.sshCommand=ssh -o StrictHostKeyChecking=accept-new']
+    : []
   // Use --recurse-submodules to initialize submodules
   // Always start with shallow clone for efficiency
   const args = [
+    ...sshArgs,
     'clone',
     '--depth',
     '1',

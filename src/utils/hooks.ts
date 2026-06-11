@@ -15,7 +15,39 @@ import {
   getHookEnvFilePath,
   invalidateSessionEnvCache,
 } from './sessionEnvironment.js'
-import { subprocessEnv } from './subprocessEnv.js'
+
+// Allowlisted env vars for hook subprocesses (principle of least privilege).
+// Only vars commonly needed by shell scripts are passed — API keys, tokens,
+// passwords, and other sensitive env vars are excluded so third-party plugin
+// hooks cannot exfiltrate them via process.env.
+const HOOK_ENV_ALLOWLIST = new Set([
+  // System
+  'PATH', 'HOME', 'USER', 'USERNAME', 'LOGNAME', 'SHELL', 'TERM', 'PWD',
+  'TMPDIR', 'TEMP', 'TMP',
+  // Locale
+  'LANG', 'LC_ALL', 'LC_CTYPE', 'LC_MESSAGES', 'LC_TIME',
+  // Display
+  'DISPLAY', 'WAYLAND_DISPLAY', 'XAUTHORITY', 'DBUS_SESSION_BUS_ADDRESS',
+  // SSH agent
+  'SSH_AUTH_SOCK', 'SSH_AGENT_PID', 'SSH_CONNECTION', 'SSH_TTY',
+  // Editors / pagers
+  'EDITOR', 'VISUAL', 'PAGER',
+  // Docker / Podman
+  'DOCKER_HOST', 'DOCKER_CONTEXT', 'DOCKER_CONFIG',
+  // Git
+  'GIT_EDITOR', 'GIT_PAGER', 'GIT_DIR', 'GIT_WORK_TREE',
+  // GPG
+  'GPG_TTY', 'GNUPGHOME',
+  // Language runtimes
+  'NODE_PATH', 'JAVA_HOME', 'GOPATH', 'GOROOT', 'CARGO_HOME', 'RUSTUP_HOME',
+  'PIP_REQUIRE_VIRTUALENV', 'GEM_HOME', 'BUNDLE_PATH',
+  // Colors / terminal
+  'TERM_PROGRAM', 'COLORTERM', 'CLICOLOR', 'CLICOLOR_FORCE',
+  // Package managers
+  'NPM_CONFIG_USERCONFIG', 'YARN_CACHE_FOLDER', 'PNPM_HOME',
+  // Windows (seen in MSYS2 / Cygwin contexts)
+  'APPDATA', 'LOCALAPPDATA', 'USERPROFILE', 'HOMEDRIVE', 'HOMEPATH',
+])
 import { getPlatform } from './platform.js'
 import { findGitBashPath, windowsPathToPosixPath } from './windowsPaths.js'
 import { getCachedPowerShellPath } from './shell/powershellDetection.js'
@@ -878,11 +910,15 @@ async function execCommandHook(
     ? hook.timeout * 1000
     : TOOL_HOOK_EXECUTION_TIMEOUT_MS
 
-  // Build env vars — all paths go through toHookPath for Windows POSIX conversion
-  const envVars: NodeJS.ProcessEnv = {
-    ...subprocessEnv(),
-    CLAUDE_PROJECT_DIR: toHookPath(projectDir),
+  // Build env vars — only pass allowlisted system env vars to hooks for
+  // least-privilege. A full subprocessEnv() spread would leak API keys,
+  // tokens, and other sensitive env vars to third-party plugin hook scripts.
+  const envVars: NodeJS.ProcessEnv = {}
+  for (const name of HOOK_ENV_ALLOWLIST) {
+    const val = process.env[name]
+    if (val !== undefined) envVars[name] = val
   }
+  envVars.CLAUDE_PROJECT_DIR = toHookPath(projectDir)
 
   // Plugin and skill hooks both set CLAUDE_PLUGIN_ROOT (skills use the same
   // name for consistency — skills can migrate to plugins without code changes)

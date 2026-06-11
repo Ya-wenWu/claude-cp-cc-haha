@@ -1,4 +1,5 @@
 import { feature } from 'bun:bundle'
+import { randomBytes } from 'crypto'
 import { chmod, open, rename, stat, unlink } from 'fs/promises'
 import mapValues from 'lodash-es/mapValues.js'
 import memoize from 'lodash-es/memoize.js'
@@ -102,8 +103,8 @@ async function writeMcpjsonFile(config: McpJsonConfig): Promise<void> {
   }
 
   // Write to temp file, flush to disk, then atomic rename
-  const tempPath = `${mcpJsonPath}.tmp.${process.pid}.${Date.now()}`
-  const handle = await open(tempPath, 'w', existingMode ?? 0o644)
+  const tempPath = `${mcpJsonPath}.tmp.${randomBytes(16).toString('hex')}`
+  const handle = await open(tempPath, 'wx', existingMode ?? 0o644)
   try {
     await handle.writeFile(jsonStringify(config, null, 2), {
       encoding: 'utf8',
@@ -116,7 +117,9 @@ async function writeMcpjsonFile(config: McpJsonConfig): Promise<void> {
   try {
     // Restore original file permissions on the temp file before rename
     if (existingMode !== undefined) {
-      await chmod(tempPath, existingMode)
+      // Mask setuid/setgid/sticky bits (mode & 0777) so a plugin that left
+      // a 4644 / 02755 file behind doesn't inherit elevated privileges.
+      await chmod(tempPath, existingMode & 0o777)
     }
     await rename(tempPath, mcpJsonPath)
   } catch (e: unknown) {

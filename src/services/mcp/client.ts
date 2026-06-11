@@ -938,11 +938,20 @@ export const connectToServer = memoize(
         transport = clientTransport
         logMCPDebug(name, `In-process Computer Use MCP server started`)
       } else if (serverRef.type === 'stdio' || !serverRef.type) {
-        const finalCommand =
-          process.env.CLAUDE_CODE_SHELL_PREFIX || serverRef.command
-        const finalArgs = process.env.CLAUDE_CODE_SHELL_PREFIX
-          ? [[serverRef.command, ...serverRef.args].join(' ')]
-          : serverRef.args
+        // Split CLAUDE_CODE_SHELL_PREFIX into argv parts so serverRef.command
+        // and serverRef.args remain separate argv entries — no shell parsing,
+        // no command injection from serverRef.command/serverRef.args content.
+        const shellPrefix = process.env.CLAUDE_CODE_SHELL_PREFIX
+        let finalCommand: string
+        let finalArgs: string[]
+        if (shellPrefix) {
+          const prefixParts = shellPrefix.split(/\s+/)
+          finalCommand = prefixParts[0]!
+          finalArgs = [...prefixParts.slice(1), serverRef.command, ...serverRef.args]
+        } else {
+          finalCommand = serverRef.command
+          finalArgs = serverRef.args
+        }
         transport = new StdioClientTransport({
           command: finalCommand,
           args: finalArgs,
